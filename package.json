@@ -32,7 +32,7 @@
   },
   "build": {
     "appId": "com.gedeon.app",
-    "productName": "Gédéon",
+    "productName": "Gedeon",
     "directories": {
       "output": "dist"
     },
