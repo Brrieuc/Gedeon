@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gédéon - Automatisation WhatsApp</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- QR Code Library for rendering received raw data -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    
+    <!-- Firebase SDKs (Compat mode for easier migration) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <!-- Socket.IO Client -->
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="background-aurora"></div>
+
+    <!-- Vue 0: Authentification Google -->
+    <section id="view-login" class="view" style="display: flex; align-items: center; justify-content: center; height: 100vh;">
+        <div class="login-box" style="background: rgba(30, 41, 59, 0.9); padding: 40px; border-radius: 20px; text-align: center; border: 1px solid var(--primary); backdrop-filter: blur(10px); max-width: 400px; width: 90%;">
+            <div class="login-logo" style="margin-bottom: 20px;">
+                <img src="logo.png" alt="Gédéon Logo" style="width: 120px; height: 120px; border-radius: 20px; object-fit: cover; border: 2px solid var(--primary);">
+            </div>
+            <h2 style="margin-bottom: 10px;">Gédéon</h2>
+            <p style="color: var(--text-muted); margin-bottom: 30px;">Connectez-vous pour accéder à vos campagnes cloud.</p>
+            <button id="btn-login-google" class="btn btn-primary btn-lg" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="18">
+                Se connecter avec Google
+            </button>
+        </div>
+    </section>
+    
+    <main class="dashboard" id="app-content" style="display: none; flex-direction: column;">
+        <header class="header">
+            <div class="logo">
+                <span class="pulse-indicator" id="connection-status-dot"></span>
+                <h1>Gédéon</h1>
+            </div>
+            <div class="header-actions">
+                <button id="btn-back-to-home" class="btn btn-outline btn-sm" style="display: none;">← Retour</button>
+                <div id="user-info" style="margin-right: 15px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
+                    <img id="user-photo" src="" alt="" style="width: 24px; height: 24px; border-radius: 50%; display: none;">
+                    <span id="user-name"></span>
+                </div>
+                <button id="btn-logout-google" class="btn btn-outline btn-sm">Déconnexion Cloud</button>
+                <button id="btn-logout" class="btn btn-danger btn-sm" style="display: none;">Déconnexion WhatsApp</button>
+                <div class="status-badge" id="global-status">Déconnecté</div>
+            </div>
+        </header>
+
+        <!-- Vue 1: Sélection de Campagne (Home) -->
+        <section id="view-home" style="display: none;">
+            <div class="welcome-container">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 10px;">
+                    <h2>Mes Campagnes de Diffusion</h2>
+                    <button id="btn-refresh-campaigns" class="btn btn-outline btn-sm" style="width: auto; padding: 5px 10px;" title="Rafraîchir la liste">🔄</button>
+                </div>
+                <p>Sélectionnez une campagne existante ou créez-en une nouvelle pour commencer.</p>
+                
+                <div id="campaigns-grid" class="campaigns-grid">
+                    <div class="campaign-card add-new" id="card-new-campaign">
+                        <div class="card-icon">+</div>
+                        <h3>Nouvelle Campagne</h3>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Vue 2: Dashboard de Campagne (Masqué au début) -->
+        <div id="view-dashboard" style="display: none;">
+            <!-- Colonne Config -->
+            <section class="panel config-panel">
+                <div class="panel-header">
+                    <h2 id="current-campaign-name">Configuration</h2>
+                    <div class="campaign-actions">
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-save-campaign">Sauvegarder</button>
+                        <button type="button" class="btn btn-danger btn-sm" id="btn-delete-campaign">Supprimer</button>
+                    </div>
+                </div>
+                
+                <div class="panel-scroll">
+                    <form id="config-form">
+                        <div class="form-group">
+                            <label for="groupName">Nom Exact du Groupe</label>
+                            <select id="groupName" name="groupName" required>
+                                <option value="">-- Sélectionnez un groupe --</option>
+                            </select>
+                            <small>Uniquement les groupes détectés sur votre compte</small>
+                        </div>
+
+                        <!-- Sélection manuelle des membres -->
+                        <div id="members-selection-container" class="form-group" style="display: none;">
+                            <div class="selection-header">
+                                <label>Membres à contacter</label>
+                                <div class="selection-tools" style="display: flex; gap: 5px;">
+                                    <button type="button" class="btn btn-outline btn-sm" id="select-all">Tout cocher</button>
+                                    <button type="button" class="btn btn-outline btn-sm" id="unselect-all">Tout décocher</button>
+                                </div>
+                            </div>
+                            <div class="search-box">
+                                <input type="text" id="member-search" placeholder="Rechercher un membre...">
+                            </div>
+                            <div id="members-list" class="members-checklist">
+                                <!-- Rempli dynamiquement -->
+                            </div>
+                            <small id="selection-summary">0 membre sélectionné</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="messageTemplate">Message ({prenom} sera remplacé)</label>
+                            <textarea id="messageTemplate" name="messageTemplate" rows="4" required>Bonjour {prenom}, j'espère que tu vas bien ? C'est un message automatisé.</textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="mediaFile">Ajouter une Image / Média (Optionnel)</label>
+                            <input type="file" id="mediaFile" name="media" accept="image/*,video/*,application/pdf">
+                            <small>L'image sera envoyée juste avant le texte.</small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="batchSize">Envois max / Session</label>
+                                <input type="number" id="batchSize" name="batchSize" value="20" min="1" max="100" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="simulationMode">Mode Envoi</label>
+                                <select id="simulationMode" name="simulationMode">
+                                    <option value="true">Simulation (Test Sûr)</option>
+                                    <option value="false">Envoi Réel (WhatsApp)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Plage horaire autorisée</label>
+                                <div class="time-range">
+                                    <input type="number" id="hourStart" name="hourStart" value="9" min="0" max="23" placeholder="9h">
+                                    <span>à</span>
+                                    <input type="number" id="hourEnd" name="hourEnd" value="19" min="0" max="23" placeholder="19h">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Pause entre messages (sec)</label>
+                            <div class="delay-range">
+                                <input type="number" id="delayMin" name="delayMin" value="15" min="5" max="300">
+                                <span>à</span>
+                                <input type="number" id="delayMax" name="delayMax" value="45" min="5" max="600">
+                            </div>
+                            <small>Le bot choisira un temps aléatoire entre ces deux valeurs.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="excludedNumbers">Numéros exclus (séparés par des virgules)</label>
+                            <input type="text" id="excludedNumbers" name="excludedNumbers" placeholder="33612345678, 33698765432">
+                        </div>
+
+                        <div class="actions">
+                            <button type="submit" class="btn btn-primary" id="btn-start" disabled>🚀 Lancer la Session</button>
+                            <button type="button" class="btn btn-danger" id="btn-stop" disabled>🛑 Forcer l'Arrêt</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Colonne Status & Console -->
+            <section class="panel right-panel">
+                <div class="qr-container" id="qr-container">
+                    <div class="qr-placeholder">
+                        <p>En attente du QR Code WhatsApp...</p>
+                        <div class="loader"></div>
+                    </div>
+                    <div id="qrcode"></div>
+                </div>
+
+                <div class="stats-container" id="stats-container" style="display: none;">
+                    <div class="stat-card">
+                        <h3>Membres Trouvés</h3>
+                        <p class="stat-number" id="stat-total">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Déjà Contactés</h3>
+                        <p class="stat-number" id="stat-done">0</p>
+                    </div>
+                    <div class="stat-card highlight">
+                        <h3>Envois cette session</h3>
+                        <p class="stat-number" id="stat-session">0</p>
+                    </div>
+                </div>
+
+                <div class="console-panel">
+                    <h3>Terminal en direct</h3>
+                    <div class="console-output" id="console-output">
+                        <div class="log-line system">Initialisation de l'interface...</div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>

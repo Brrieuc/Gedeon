@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Test Volt",
+    "groupName": "",
+    "messageTemplate": "Bonjour {prenom}, j'espère que tu vas bien ? C'est un message automatisé.",
+    "batchSize": 20,
+    "simulationMode": true,
+    "excludedNumbers": "",
+    "hourStart": 9,
+    "hourEnd": 19,
+    "delayMin": 15,
+    "delayMax": 45,
+    "selectedMemberIds": [],
+    "id": "1773676354029"
+  }
+]
