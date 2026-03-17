@@ -23,7 +23,8 @@ let currentParticipants = [];
 let currentCampaignId = null;
 let campaignsLoadedOnce = false;
 let socketConnected = false;
-let pendingSelectedMemberIds = []; // Pour restaurer la sélection après chargement des membres
+let pendingSelectedMemberIds = []; 
+let igScrapedUsers = []; // Stocker les abonnés scrapés
 
 // ─── ÉLÉMENTS UI ────────────────────────────────────────────────────────────
 const statusBadge        = document.getElementById('global-status');
@@ -63,14 +64,30 @@ const btnSaveCampaign    = document.getElementById('btn-save-campaign');
 const btnDeleteCampaign  = document.getElementById('btn-delete-campaign');
 const btnRefreshCampaigns = document.getElementById('btn-refresh-campaigns');
 
+// Instagram Elements
+const igLoginContainer    = document.getElementById('ig-login-container');
+const igStatusBadge     = document.getElementById('ig-connection-status');
+const igLoginForm       = document.getElementById('ig-login-form');
+const btnIgLogin        = document.getElementById('btn-ig-login');
+const igScreenshotImg   = document.getElementById('ig-screenshot-img');
+const igPreviewPlaceholder = document.getElementById('ig-preview-placeholder');
+const ig2faContainer    = document.getElementById('ig-2fa-container');
+const ig2faForm         = document.getElementById('ig-2fa-form');
+const btnIg2faSubmit    = document.getElementById('btn-ig-2fa-submit');
+const igDashboardContainer = document.getElementById('ig-dashboard-container');
+const btnIgLogout       = document.getElementById('btn-ig-logout');
+const igScrapedCount    = document.getElementById('ig-scraped-count');
+const igFollowedToday      = document.getElementById('ig-followed-today');
+
 // ─── LOGS & SOCKET HELPER ───────────────────────────────────────────────────
-function appendLog(msg, type = 'info') {
-    if (!consoleOutput) return;
+function appendLog(msg, type = 'info', consoleId = 'console-output') {
+    const target = document.getElementById(consoleId);
+    if (!target) return;
     const line = document.createElement('div');
     line.className = `log-line ${type}`;
     line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-    consoleOutput.appendChild(line);
-    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    target.appendChild(line);
+    target.scrollTop = target.scrollHeight;
 }
 
 function emitSecure(event, data = {}) {
@@ -98,17 +115,45 @@ function forceSyncCampaigns() {
 }
 
 // ─── VUES ───────────────────────────────────────────────────────────────────
+const sidebar = document.getElementById('sidebar');
+const viewTitle = document.getElementById('view-title');
+
 function showView(viewName) {
-    if (viewName === 'home') {
-        viewHome.style.display   = 'flex';
-        viewDashboard.style.display = 'none';
+    // Hide all views
+    document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+    
+    // Reset sidebar active states
+    document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+
+    if (viewName === 'launcher') {
+        document.getElementById('view-launcher').style.display = 'flex';
+        document.getElementById('nav-launcher').classList.add('active');
+        viewTitle.textContent = 'Accueil';
+        btnBackHome.style.display = 'none';
+        currentCampaignId = null;
+    } else if (viewName === 'home') {
+        document.getElementById('view-home').style.display = 'flex';
+        document.getElementById('nav-whatsapp').classList.add('active');
+        viewTitle.textContent = 'WhatsApp - Mes Campagnes';
         btnBackHome.style.display = 'none';
         currentCampaignId = null;
         renderCampaignsGrid();
-    } else {
-        viewHome.style.display      = 'none';
-        viewDashboard.style.display = 'grid';
-        btnBackHome.style.display   = 'inline-block';
+    } else if (viewName === 'instagram') {
+        document.getElementById('view-instagram').style.display = 'flex';
+        document.getElementById('nav-instagram').classList.add('active');
+        viewTitle.textContent = 'Instagram - Automatisation';
+        btnBackHome.style.display = 'none';
+        currentCampaignId = null;
+        // Afficher par défaut le container de login pour éviter l'écran vide
+        if (igLoginContainer) igLoginContainer.style.display = 'block';
+        if (igDashboardContainer) igDashboardContainer.style.display = 'none';
+        // Init IG session
+        socket.emit('ig_init');
+    } else if (viewName === 'dashboard') {
+        document.getElementById('view-dashboard').style.display = 'grid';
+        document.getElementById('nav-whatsapp').classList.add('active');
+        viewTitle.textContent = 'WhatsApp - Configuration';
+        btnBackHome.style.display = 'inline-block';
     }
 }
 
@@ -296,19 +341,134 @@ socket.on('group_participants', (data) => {
     renderMembersList(data.participants || []);
 });
 
+// --- Instagram Hooks ---
+socket.on('ig_status', (data) => {
+    console.info('[IG] Status:', data);
+    if (igStatusBadge) {
+        igStatusBadge.textContent = data.desc;
+        igStatusBadge.className = 'status-badge ' + data.state.toLowerCase();
+    }
+
+    const igConnectedUser = document.getElementById('ig-connected-user');
+    if (igConnectedUser) {
+        if (data.state === 'CONNECTED') {
+            igConnectedUser.textContent = data.username ? `@${data.username}` : 'Recherche du compte...';
+        } else {
+            igConnectedUser.textContent = '';
+        }
+    }
+    
+    if (data.state === 'CONNECTED') {
+        igLoginContainer.style.display = 'none';
+        igDashboardContainer.style.display = 'grid';
+    } else {
+        igLoginContainer.style.display = 'block';
+        igDashboardContainer.style.display = 'none';
+        if (btnIgLogin) {
+            btnIgLogin.disabled = false;
+            btnIgLogin.innerHTML = '<span>Se connecter</span>';
+        }
+    }
+});
+
+socket.on('ig_screenshot', (base64) => {
+    if (igScreenshotImg && igPreviewPlaceholder) {
+        igScreenshotImg.src = `data:image/jpeg;base64,${base64}`;
+        igScreenshotImg.style.display = 'block';
+        igPreviewPlaceholder.style.display = 'none';
+        
+        // Initialiser les contrôles distants une seule fois
+        if (!igScreenshotImg.dataset.active) {
+            igScreenshotImg.dataset.active = "true";
+            setupRemoteControls();
+        }
+    }
+});
+
+function setupRemoteControls() {
+    igScreenshotImg.style.cursor = "crosshair";
+    
+    // Clic distant
+    igScreenshotImg.onclick = (e) => {
+        const rect = igScreenshotImg.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        socket.emit('ig_remote_click', { x, y });
+    };
+
+    // Clavier distant
+    window.addEventListener('keydown', (e) => {
+        // Seulement si on est sur l'onglet Instagram et qu'on survole l'image
+        const isIgVisible = document.getElementById('ig-view').style.display !== 'none';
+        const isHovering = igScreenshotImg.matches(':hover');
+        
+        if (isIgVisible && isHovering) {
+            if (e.key.length === 1) {
+                socket.emit('ig_remote_type', { text: e.key });
+            } else if (['Enter', 'Backspace', 'Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                e.preventDefault();
+                socket.emit('ig_remote_key', { key: e.key });
+            }
+        }
+    });
+}
+
+socket.on('ig_code_required', () => {
+    ig2faContainer.style.display = 'block';
+    appendLog('Code de sécurité requis pour Instagram.', 'warn', 'ig-console-output');
+});
+
+socket.on('ig_login_result', (res) => {
+    if (btnIgLogin) {
+        btnIgLogin.disabled = false;
+        btnIgLogin.innerHTML = '<span>Se connecter via Gédéon</span>';
+    }
+    
+    if (!res.success) {
+        appendLog(`Erreur connexion IG: ${res.message}`, 'error', 'ig-console-output');
+        alert(`Erreur: ${res.message}`);
+    } else if (res.codeRequired) {
+        ig2faContainer.style.display = 'block';
+    } else {
+        appendLog('Connexion Instagram réussie !', 'success', 'ig-console-output');
+    }
+});
+
+socket.on('ig_submit_code_result', (res) => {
+    if (res.success) {
+        ig2faContainer.style.display = 'none';
+        appendLog('Code validé. Instagram prêt.', 'success', 'ig-console-output');
+    } else {
+        alert(`Erreur code: ${res.message}`);
+    }
+});
+
+socket.on('ig_scraped_data', (data) => {
+    igScrapedUsers = data;
+    if (igScrapedCount) igScrapedCount.textContent = data.length;
+});
+
+socket.on('log_ig', (data) => appendLog(data.msg, data.type, 'ig-console-output'));
+
 // ─── AUTHENTIFICATION ─────────────────────────────────────────────────────────
 auth.onAuthStateChanged(user => {
     if (user) {
         currentUser = user;
         viewLogin.style.display = 'none';
         appContent.style.display = 'flex';
+        sidebar.style.display = 'flex'; // Show sidebar after login
         if (userNameDisplay) userNameDisplay.textContent = user.displayName || user.email;
-        showView('home');
+        if (userPhotoDisplay && user.photoURL) {
+            userPhotoDisplay.src = user.photoURL;
+            userPhotoDisplay.style.display = 'block';
+        }
+        showView('launcher'); // Start on launcher
         forceSyncCampaigns();
     } else {
         currentUser = null;
         viewLogin.style.display = 'flex';
         appContent.style.display = 'none';
+        sidebar.style.display = 'none'; // Hide sidebar
     }
 });
 
@@ -425,3 +585,64 @@ cardNewCampaign.onclick = () => {
         selectedMemberIds: []
     });
 };
+// ─── INSTAGRAM ACTIONS ────────────────────────────────────────────────────────
+if (igLoginForm) {
+    igLoginForm.onsubmit = (e) => {
+        e.preventDefault();
+        const username = document.getElementById('ig-username').value;
+        const password = document.getElementById('ig-password').value;
+        
+        btnIgLogin.disabled = true;
+        btnIgLogin.innerHTML = '<span class="loader-sm"></span> Connexion en cours...';
+        
+        appendLog(`Connexion à Instagram en cours...`, 'info', 'ig-console-output');
+        socket.emit('ig_login', { username, password });
+    };
+}
+
+const btnIgForceLogin = document.getElementById('btn-ig-force-login');
+if (btnIgForceLogin) {
+    btnIgForceLogin.onclick = () => {
+        appendLog('Réinitialisation vers la page de login Instagram...', 'info', 'ig-console-output');
+        socket.emit('ig_force_login');
+    };
+}
+
+if (ig2faForm) {
+    ig2faForm.onsubmit = (e) => {
+        e.preventDefault();
+        const code = document.getElementById('ig-2fa-code').value;
+        socket.emit('ig_submit_code', { code });
+    };
+}
+
+if (btnIgLogout) {
+    btnIgLogout.onclick = () => {
+        if (confirm("Se déconnecter d'Instagram ?")) socket.emit('ig_logout');
+    };
+}
+
+if (document.getElementById('ig-config-form')) {
+    document.getElementById('ig-config-form').onsubmit = (e) => {
+        e.preventDefault();
+        const config = {
+            target: document.getElementById('ig-target-account').value,
+            autoFollow: document.getElementById('ig-auto-follow').checked,
+            unfollowNotFollowing: document.getElementById('ig-unfollow-not-following').checked,
+            unfollowFollowing: document.getElementById('ig-unfollow-following').checked,
+            delayMin: parseInt(document.getElementById('ig-delay-min').value),
+            delayMax: parseInt(document.getElementById('ig-delay-max').value),
+            scrapedUsers: igScrapedUsers
+        };
+        emitSecure('ig_start_campaign', config);
+    };
+}
+
+if (document.getElementById('btn-ig-scrape')) {
+    document.getElementById('btn-ig-scrape').onclick = () => {
+        const target = document.getElementById('ig-target-account').value;
+        if (!target) return alert('Source requise !');
+        appendLog(`Lancement du scraping pour ${target}...`, 'info', 'ig-console-output');
+        emitSecure('ig_scrape_followers', { target });
+    };
+}

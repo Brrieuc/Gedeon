@@ -20,190 +20,384 @@
 <body>
     <div class="background-aurora"></div>
 
-    <!-- Vue 0: Authentification Google -->
-    <section id="view-login" class="view" style="display: flex; align-items: center; justify-content: center; height: 100vh;">
-        <div class="login-box" style="background: rgba(30, 41, 59, 0.9); padding: 40px; border-radius: 20px; text-align: center; border: 1px solid var(--primary); backdrop-filter: blur(10px); max-width: 400px; width: 90%;">
-            <div class="login-logo" style="margin-bottom: 20px;">
-                <img src="logo.png" alt="Gédéon Logo" style="width: 120px; height: 120px; border-radius: 20px; object-fit: cover; border: 2px solid var(--primary);">
+    <!-- Vue 0: Landing Page & Authentification -->
+    <section id="view-login" class="view" style="display: flex;">
+        <div class="shards-container">
+            <div class="shard shard-1"></div>
+            <div class="shard shard-2"></div>
+            <div class="shard shard-3"></div>
+            <div class="shard shard-4"></div>
+        </div>
+        <div class="landing-container">
+            <header class="hero-section">
+                <div class="hero-logo-box">
+                    <img src="logo.png" alt="Gédéon Logo" class="hero-logo">
+                </div>
+                <div class="hero-content">
+                    <h1>Gédéon</h1>
+                    <div class="subtitle">Le bon vieux larbin</div>
+                </div>
+                <div class="slogan">"Le seul employé qui ne prend jamais de pause café."</div>
+                <div class="login-action">
+                    <button id="btn-login-google" class="btn btn-primary btn-lg" style="display: flex; align-items: center; justify-content: center; gap: 12px; padding: 18px 45px; font-size: 1.3rem; border-radius: 60px; background: white; color: black; border: none; font-weight: 800; letter-spacing: -0.5px;">
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="28">
+                        DÉMARRER LE TRAVAIL
+                    </button>
+                    <p style="margin-top: 15px; opacity: 0.6; font-size: 0.9rem;">Accédez à votre cockpit d'automatisation</p>
+                </div>
+            </header>
+
+            <div class="features-grid">
+                <div class="feature-box">
+                    <h3>💬 WhatsApp Master</h3>
+                    <p>Envoyez des milliers de messages personnalisés en un clic. Gédéon gère la file d'attente, les pauses anti-ban et le suivi pour vous.</p>
+                </div>
+                <div class="feature-box">
+                    <h3>📸 Instagram Rocket</h3>
+                    <p>Préparez-vous à la révolution. L'automatisation des DMs Instagram arrive pour transformer vos prospects en clients fidèles.</p>
+                </div>
             </div>
-            <h2 style="margin-bottom: 10px;">Gédéon</h2>
-            <p style="color: var(--text-muted); margin-bottom: 30px;">Connectez-vous pour accéder à vos campagnes cloud.</p>
-            <button id="btn-login-google" class="btn btn-primary btn-lg" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="18">
-                Se connecter avec Google
-            </button>
         </div>
     </section>
-    
-    <main class="dashboard" id="app-content" style="display: none; flex-direction: column;">
-        <header class="header">
-            <div class="logo">
-                <span class="pulse-indicator" id="connection-status-dot"></span>
-                <h1>Gédéon</h1>
+    <div class="dashboard" id="app-content" style="display: none;">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo" style="display: flex; flex-direction: column; align-items: flex-start; gap: 15px;">
+                    <img src="logo.png" alt="Gédéon Logo" style="width: 60px; height: 60px; border-radius: 12px; border: 1px solid var(--primary);">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="pulse-indicator" id="connection-status-dot"></span>
+                        <h1>Gédéon</h1>
+                    </div>
+                </div>
             </div>
-            <div class="header-actions">
-                <button id="btn-back-to-home" class="btn btn-outline btn-sm" style="display: none;">← Retour</button>
-                <div id="user-info" style="margin-right: 15px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
-                    <img id="user-photo" src="" alt="" style="width: 24px; height: 24px; border-radius: 50%; display: none;">
+            <nav class="sidebar-nav">
+                <div class="nav-item active" id="nav-launcher" onclick="showView('launcher')">
+                    <span class="nav-icon">🏠</span>
+                    <span class="nav-text">Accueil</span>
+                </div>
+                <div class="nav-item" id="nav-whatsapp" onclick="showView('home')">
+                    <span class="nav-icon">💬</span>
+                    <span class="nav-text">WhatsApp</span>
+                </div>
+                <div class="nav-item" id="nav-instagram" onclick="showView('instagram')">
+                    <span class="nav-icon">📸</span>
+                    <span class="nav-text">Instagram</span>
+                </div>
+            </nav>
+            <div class="sidebar-footer">
+                <div id="user-info" style="font-size: 0.85rem; display: flex; align-items: center; gap: 8px; padding: 0 10px;">
+                    <img id="user-photo" src="" alt="" style="width: 28px; height: 28px; border-radius: 50%; display: none;">
                     <span id="user-name"></span>
                 </div>
-                <button id="btn-logout-google" class="btn btn-outline btn-sm">Déconnexion Cloud</button>
-                <button id="btn-logout" class="btn btn-danger btn-sm" style="display: none;">Déconnexion WhatsApp</button>
-                <div class="status-badge" id="global-status">Déconnecté</div>
+                <button id="btn-logout-google" class="btn btn-outline btn-sm">Déconnexion</button>
             </div>
-        </header>
+        </aside>
 
-        <!-- Vue 1: Sélection de Campagne (Home) -->
-        <section id="view-home" style="display: none;">
-            <div class="welcome-container">
-                <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 10px;">
-                    <h2>Mes Campagnes de Diffusion</h2>
-                    <button id="btn-refresh-campaigns" class="btn btn-outline btn-sm" style="width: auto; padding: 5px 10px;" title="Rafraîchir la liste">🔄</button>
+        <main class="main-content">
+            <header class="header">
+                <div class="header-title">
+                    <h2 id="view-title">Tableau de bord</h2>
                 </div>
-                <p>Sélectionnez une campagne existante ou créez-en une nouvelle pour commencer.</p>
-                
-                <div id="campaigns-grid" class="campaigns-grid">
-                    <div class="campaign-card add-new" id="card-new-campaign">
-                        <div class="card-icon">+</div>
-                        <h3>Nouvelle Campagne</h3>
+                <div class="header-actions">
+                    <button id="btn-back-to-home" class="btn btn-outline btn-sm" style="display: none;">← Retour</button>
+                    <button id="btn-logout" class="btn btn-danger btn-sm" style="display: none;">Déconnexion WhatsApp</button>
+                    <div class="status-badge" id="global-status">Déconnecté</div>
+                </div>
+            </header>
+
+            <!-- Vue Launcher: Choix de l'outil -->
+            <section id="view-launcher" class="view" style="display: none;">
+                <div class="welcome-container">
+                    <h2>Bienvenue sur Gédéon</h2>
+                    <p>Sélectionnez l'outil d'automatisation que vous souhaitez utiliser.</p>
+                </div>
+                <div class="launcher-grid">
+                    <div class="tool-card whatsapp" onclick="showView('home')">
+                        <div class="tool-icon">💬</div>
+                        <h2>WhatsApp</h2>
+                        <p>Campagnes de diffusion groupées</p>
+                    </div>
+                    <div class="tool-card instagram" onclick="showView('instagram')">
+                        <div class="tool-icon">📸</div>
+                        <h2>Instagram</h2>
+                        <p>Automatisation de messages (Prochainement)</p>
                     </div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- Vue 2: Dashboard de Campagne (Masqué au début) -->
-        <div id="view-dashboard" style="display: none;">
-            <!-- Colonne Config -->
-            <section class="panel config-panel">
-                <div class="panel-header">
-                    <h2 id="current-campaign-name">Configuration</h2>
-                    <div class="campaign-actions">
-                        <button type="button" class="btn btn-primary btn-sm" id="btn-save-campaign">Sauvegarder</button>
-                        <button type="button" class="btn btn-danger btn-sm" id="btn-delete-campaign">Supprimer</button>
+            <!-- Vue 1: Sélection de Campagne (Home WhatsApp) -->
+            <section id="view-home" class="view" style="display: none;">
+                <div class="welcome-container">
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 10px;">
+                        <h2>Mes Campagnes WhatsApp</h2>
+                        <button id="btn-refresh-campaigns" class="btn btn-outline btn-sm" style="width: auto; padding: 5px 10px;" title="Rafraîchir la liste">🔄</button>
+                    </div>
+                    <p>Sélectionnez une campagne existante ou créez-en une nouvelle.</p>
+                    
+                    <div id="campaigns-grid" class="campaigns-grid">
+                        <div class="campaign-card add-new" id="card-new-campaign">
+                            <div class="card-icon">+</div>
+                            <h3>Nouvelle Campagne</h3>
+                        </div>
                     </div>
                 </div>
-                
-                <div class="panel-scroll">
-                    <form id="config-form">
-                        <div class="form-group">
-                            <label for="groupName">Nom Exact du Groupe</label>
-                            <select id="groupName" name="groupName" required>
-                                <option value="">-- Sélectionnez un groupe --</option>
-                            </select>
-                            <small>Uniquement les groupes détectés sur votre compte</small>
-                        </div>
+            </section>
 
-                        <!-- Sélection manuelle des membres -->
-                        <div id="members-selection-container" class="form-group" style="display: none;">
-                            <div class="selection-header">
-                                <label>Membres à contacter</label>
-                                <div class="selection-tools" style="display: flex; gap: 5px;">
-                                    <button type="button" class="btn btn-outline btn-sm" id="select-all">Tout cocher</button>
-                                    <button type="button" class="btn btn-outline btn-sm" id="unselect-all">Tout décocher</button>
-                                </div>
-                            </div>
-                            <div class="search-box">
-                                <input type="text" id="member-search" placeholder="Rechercher un membre...">
-                            </div>
-                            <div id="members-list" class="members-checklist">
-                                <!-- Rempli dynamiquement -->
-                            </div>
-                            <small id="selection-summary">0 membre sélectionné</small>
+            <!-- Vue 2: Dashboard de Campagne WhatsApp -->
+            <div id="view-dashboard" class="view" style="display: none;">
+                <!-- Colonne Config -->
+                <section class="panel config-panel">
+                    <div class="panel-header">
+                        <h2 id="current-campaign-name">Configuration</h2>
+                        <div class="campaign-actions">
+                            <button type="button" class="btn btn-primary btn-sm" id="btn-save-campaign">Sauvegarder</button>
+                            <button type="button" class="btn btn-danger btn-sm" id="btn-delete-campaign">Supprimer</button>
                         </div>
-
-                        <div class="form-group">
-                            <label for="messageTemplate">Message ({prenom} sera remplacé)</label>
-                            <textarea id="messageTemplate" name="messageTemplate" rows="4" required>Bonjour {prenom}, j'espère que tu vas bien ? C'est un message automatisé.</textarea>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="mediaFile">Ajouter une Image / Média (Optionnel)</label>
-                            <input type="file" id="mediaFile" name="media" accept="image/*,video/*,application/pdf">
-                            <small>L'image sera envoyée juste avant le texte.</small>
-                        </div>
-
-                        <div class="form-row">
+                    </div>
+                    
+                    <div class="panel-scroll">
+                        <form id="config-form">
                             <div class="form-group">
-                                <label for="batchSize">Envois max / Session</label>
-                                <input type="number" id="batchSize" name="batchSize" value="20" min="1" max="100" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="simulationMode">Mode Envoi</label>
-                                <select id="simulationMode" name="simulationMode">
-                                    <option value="true">Simulation (Test Sûr)</option>
-                                    <option value="false">Envoi Réel (WhatsApp)</option>
+                                <label for="groupName">Nom Exact du Groupe</label>
+                                <select id="groupName" name="groupName" required>
+                                    <option value="">-- Sélectionnez un groupe --</option>
                                 </select>
+                                <small>Uniquement les groupes détectés sur votre compte</small>
                             </div>
-                        </div>
 
-                        <div class="form-row">
+                            <!-- Sélection manuelle des membres -->
+                            <div id="members-selection-container" class="form-group" style="display: none;">
+                                <div class="selection-header">
+                                    <label>Membres à contacter</label>
+                                    <div class="selection-tools" style="display: flex; gap: 5px;">
+                                        <button type="button" class="btn btn-outline btn-sm" id="select-all">Tout cocher</button>
+                                        <button type="button" class="btn btn-outline btn-sm" id="unselect-all">Tout décocher</button>
+                                    </div>
+                                </div>
+                                <div class="search-box">
+                                    <input type="text" id="member-search" placeholder="Rechercher un membre...">
+                                </div>
+                                <div id="members-list" class="members-checklist">
+                                    <!-- Rempli dynamiquement -->
+                                </div>
+                                <small id="selection-summary">0 membre sélectionné</small>
+                            </div>
+
                             <div class="form-group">
-                                <label>Plage horaire autorisée</label>
-                                <div class="time-range">
-                                    <input type="number" id="hourStart" name="hourStart" value="9" min="0" max="23" placeholder="9h">
-                                    <span>à</span>
-                                    <input type="number" id="hourEnd" name="hourEnd" value="19" min="0" max="23" placeholder="19h">
+                                <label for="messageTemplate">Message ({prenom} sera remplacé)</label>
+                                <textarea id="messageTemplate" name="messageTemplate" rows="4" required>Bonjour {prenom}, j'espère que tu vas bien ? C'est un message automatisé.</textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mediaFile">Ajouter une Image / Média (Optionnel)</label>
+                                <input type="file" id="mediaFile" name="media" accept="image/*,video/*,application/pdf">
+                                <small>L'image sera envoyée juste avant le texte.</small>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="batchSize">Envois max / Session</label>
+                                    <input type="number" id="batchSize" name="batchSize" value="20" min="1" max="100" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="simulationMode">Mode Envoi</label>
+                                    <select id="simulationMode" name="simulationMode">
+                                        <option value="true">Simulation (Test Sûr)</option>
+                                        <option value="false">Envoi Réel (WhatsApp)</option>
+                                    </select>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="form-group">
-                            <label>Pause entre messages (sec)</label>
-                            <div class="delay-range">
-                                <input type="number" id="delayMin" name="delayMin" value="15" min="5" max="300">
-                                <span>à</span>
-                                <input type="number" id="delayMax" name="delayMax" value="45" min="5" max="600">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Plage horaire autorisée</label>
+                                    <div class="time-range">
+                                        <input type="number" id="hourStart" name="hourStart" value="9" min="0" max="23" placeholder="9h">
+                                        <span>à</span>
+                                        <input type="number" id="hourEnd" name="hourEnd" value="19" min="0" max="23" placeholder="19h">
+                                    </div>
+                                </div>
                             </div>
-                            <small>Le bot choisira un temps aléatoire entre ces deux valeurs.</small>
-                        </div>
 
+                            <div class="form-group">
+                                <label>Pause entre messages (sec)</label>
+                                <div class="delay-range">
+                                    <input type="number" id="delayMin" name="delayMin" value="15" min="5" max="300">
+                                    <span>à</span>
+                                    <input type="number" id="delayMax" name="delayMax" value="45" min="5" max="600">
+                                </div>
+                                <small>Le bot choisira un temps aléatoire entre ces deux valeurs.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="excludedNumbers">Numéros exclus (séparés par des virgules)</label>
+                                <input type="text" id="excludedNumbers" name="excludedNumbers" placeholder="33612345678, 33698765432">
+                            </div>
+
+                            <div class="actions">
+                                <button type="submit" class="btn btn-primary" id="btn-start" disabled>🚀 Lancer la Session</button>
+                                <button type="button" class="btn btn-danger" id="btn-stop" disabled>🛑 Forcer l'Arrêt</button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- Colonne Status & Console -->
+                <section class="panel right-panel">
+                    <div class="qr-container" id="qr-container">
+                        <div class="qr-placeholder">
+                            <p>En attente du QR Code WhatsApp...</p>
+                            <div class="loader"></div>
+                        </div>
+                        <div id="qrcode"></div>
+                    </div>
+
+                    <div class="stats-container" id="stats-container" style="display: none;">
+                        <div class="stat-card">
+                            <h3>Membres Trouvés</h3>
+                            <p class="stat-number" id="stat-total">0</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Déjà Contactés</h3>
+                            <p class="stat-number" id="stat-done">0</p>
+                        </div>
+                        <div class="stat-card highlight">
+                            <h3>Envois cette session</h3>
+                            <p class="stat-number" id="stat-session">0</p>
+                        </div>
+                    </div>
+
+                    <div class="console-panel">
+                        <h3>Terminal en direct</h3>
+                        <div class="console-output" id="console-output">
+                            <div class="log-line system">Initialisation de l'interface...</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Vue Instagram (Dashboard Complet) -->
+            <section id="view-instagram" class="view" style="display: none; overflow-y: auto;">
+                <div id="ig-login-container" class="welcome-container" style="display: block;">
+                    <div class="tool-icon" style="font-size: 4rem; margin-bottom: 1rem;">📸</div>
+                    <h2>Connexion Instagram</h2>
+                    <p style="color: var(--text-muted); max-width: 400px; margin: 0 auto 1.5rem;">
+                        Connexion via l'API mobile Instagram — rapide et fiable. 
+                        Votre session sera sauvegardée pour les prochaines fois.
+                    </p>
+
+                    <form id="ig-login-form" style="max-width: 380px; margin: 1rem auto; text-align: left;">
                         <div class="form-group">
-                            <label for="excludedNumbers">Numéros exclus (séparés par des virgules)</label>
-                            <input type="text" id="excludedNumbers" name="excludedNumbers" placeholder="33612345678, 33698765432">
+                            <label for="ig-username">Nom d'utilisateur ou Email</label>
+                            <input type="text" id="ig-username" required placeholder="votre_username" autocomplete="username">
                         </div>
-
-                        <div class="actions">
-                            <button type="submit" class="btn btn-primary" id="btn-start" disabled>🚀 Lancer la Session</button>
-                            <button type="button" class="btn btn-danger" id="btn-stop" disabled>🛑 Forcer l'Arrêt</button>
+                        <div class="form-group">
+                            <label for="ig-password">Mot de passe</label>
+                            <input type="password" id="ig-password" required placeholder="••••••••" autocomplete="current-password">
                         </div>
+                        <button type="submit" class="btn btn-primary btn-block" id="btn-ig-login">
+                            <span>Se connecter</span>
+                        </button>
                     </form>
+
+                    <div id="ig-2fa-container" style="display: none; margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 2rem;">
+                        <h3 style="color: var(--primary);">Code de sécurité requis 🛡️</h3>
+                        <p>Saisissez le code reçu par SMS ou application d'authentification.</p>
+                        <form id="ig-2fa-form" style="max-width: 300px; margin: 1rem auto; display: flex; gap: 10px;">
+                            <input type="text" id="ig-2fa-code" placeholder="123456" required style="text-align: center; letter-spacing: 5px; font-weight: 800;">
+                            <button type="submit" class="btn btn-primary" id="btn-ig-2fa-submit">Valider</button>
+                        </form>
+                    </div>
+                </div>
+
+                <div id="ig-dashboard-container" class="dashboard-grid" style="display: none;">
+                    <!-- Panneau de gauche: Configuration -->
+                    <div class="panel config-panel">
+                        <div class="panel-header">
+                            <div>
+                                <h2>Configuration Instagram</h2>
+                                <p id="ig-connected-user" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; font-weight: 600;"></p>
+                            </div>
+                            <div class="status-badge connected" id="ig-connection-status">Connecté</div>
+                        </div>
+
+                        <div class="panel-scroll">
+                            <form id="ig-config-form">
+                                <div class="form-group">
+                                    <label for="ig-target-account">Compte Cible (à scraper)</label>
+                                    <div style="display: flex; gap: 10px;">
+                                        <input type="text" id="ig-target-account" placeholder="@concurrent_ou_influenceur" required>
+                                        <button type="button" class="btn btn-outline btn-sm" id="btn-ig-scrape" style="white-space: nowrap;">🔍 Scraper</button>
+                                    </div>
+                                    <small>Récupère les abonnés de ce compte pour les cibler.</small>
+                                </div>
+
+                                <div class="stats-row" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                                    <div class="stat-mini-card">
+                                        <span id="ig-scraped-count">0</span>
+                                        <label>Scrapés</label>
+                                    </div>
+                                    <div class="stat-mini-card">
+                                        <span id="ig-followed-today">0</span>
+                                        <label>Follows / Jour</label>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Règles d'Automatisation</label>
+                                    <div class="checkbox-group" style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; border: 1px solid var(--border);">
+                                        <label class="check-container">
+                                            <input type="checkbox" id="ig-auto-follow" checked>
+                                            <span class="checkmark"></span>
+                                            S'abonner automatiquement
+                                        </label>
+                                        <label class="check-container" style="margin-top: 10px;">
+                                            <input type="checkbox" id="ig-unfollow-not-following" checked>
+                                            <span class="checkmark"></span>
+                                            Se désabonner si pas de follow-back (48h)
+                                        </label>
+                                        <label class="check-container" style="margin-top: 10px;">
+                                            <input type="checkbox" id="ig-unfollow-following" checked>
+                                            <span class="checkmark"></span>
+                                            Se désabonner si follow-back (immédiat)
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Délais (Vitesse Humaine)</label>
+                                        <div class="delay-range">
+                                            <input type="number" id="ig-delay-min" value="45" min="30">
+                                            <span>à</span>
+                                            <input type="number" id="ig-delay-max" value="120" min="60">
+                                        </div>
+                                        <small>Temps en secondes entre chaque action.</small>
+                                    </div>
+                                </div>
+
+                                <div class="actions" style="margin-top: 2rem;">
+                                    <button type="submit" class="btn btn-primary" id="btn-ig-start">🚀 Lancer l'Automate</button>
+                                    <button type="button" class="btn btn-danger" id="btn-ig-stop" disabled>🛑 Arrêter</button>
+                                    <button type="button" class="btn btn-outline btn-block" id="btn-ig-logout" style="margin-top: 10px;">Déconnexion Instagram</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Panneau de droite: Logs/Console -->
+                    <div class="panel right-panel">
+                        <div class="console-panel" style="height: 100%; display: flex; flex-direction: column;">
+                            <h3>Terminal Instagram</h3>
+                            <div class="console-output" id="ig-console-output" style="flex-grow: 1;">
+                                <div class="log-line system">Moteur Instagram prêt.</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
-
-            <!-- Colonne Status & Console -->
-            <section class="panel right-panel">
-                <div class="qr-container" id="qr-container">
-                    <div class="qr-placeholder">
-                        <p>En attente du QR Code WhatsApp...</p>
-                        <div class="loader"></div>
-                    </div>
-                    <div id="qrcode"></div>
-                </div>
-
-                <div class="stats-container" id="stats-container" style="display: none;">
-                    <div class="stat-card">
-                        <h3>Membres Trouvés</h3>
-                        <p class="stat-number" id="stat-total">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Déjà Contactés</h3>
-                        <p class="stat-number" id="stat-done">0</p>
-                    </div>
-                    <div class="stat-card highlight">
-                        <h3>Envois cette session</h3>
-                        <p class="stat-number" id="stat-session">0</p>
-                    </div>
-                </div>
-
-                <div class="console-panel">
-                    <h3>Terminal en direct</h3>
-                    <div class="console-output" id="console-output">
-                        <div class="log-line system">Initialisation de l'interface...</div>
-                    </div>
-                </div>
-            </section>
-        </div>
-    </main>
+        </main>
+    </div>
 
     <script src="script.js"></script>
 </body>

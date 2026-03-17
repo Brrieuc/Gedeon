@@ -4,11 +4,15 @@ const { Server } = require("socket.io");
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 const path = require('path');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
+const { executablePath } = require('puppeteer-core');
 require('dotenv').config();
 const firebase = require('firebase/compat/app');
 require('firebase/compat/firestore');
 
-// Configuration Firebase (Utilise tes clés déjà fournies)
+// Configuration Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyBNkbLMeK5sTDXW8-NvMdZ-5VZTL_a0X6o",
   authDomain: "gedeon-larbin.firebaseapp.com",
@@ -18,21 +22,18 @@ const firebaseConfig = {
   appId: "1:750672153668:web:1537bebe32799e71590011"
 };
 
-// Initialisation simplifiée (sans fichier JSON !)
 const app_firebase = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
 const db = app_firebase.firestore();
 
-// Test de connexion immédiat
 db.collection('test').limit(1).get()
     .then(() => console.log('[FIREBASE] Connexion Firestore établie et active.'))
     .catch(err => console.error('[FIREBASE] Erreur de connexion Firestore:', err.message));
 
-// Configuration du Serveur
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { 
-    maxHttpBufferSize: 1e7, // 10 Mo pour les photos/vidéos
-    cors: { origin: "*" } 
+const io = new Server(server, {
+    maxHttpBufferSize: 1e7,
+    cors: { origin: "*" }
 });
 
 const PORT = process.env.PORT || 3000;
@@ -40,33 +41,32 @@ const PORT = process.env.PORT || 3000;
 async function getUidFromToken(data) {
     if (!data) return null;
     let uid = null;
-    
-    // Si la data est directement un string, on suppose que c'est l'uid
     if (typeof data === 'string') {
         uid = data;
     } else if (data.uid) {
-        // Le client passe maintenant toujours l'uid dans data.uid
         uid = data.uid;
     }
-
     if (!uid || uid === 'anonymous') {
         console.warn(`[API] Attention, UID invalide ou anonyme reçu:`, data);
         return null;
     }
-
     return uid;
 }
 
-// Variables Globale WhatsApp Session
+// Variables globales WhatsApp
 let wpClient = null;
 let isBotWorking = false;
 let globalGroups = [];
 let forceStop = false;
 
-// Middleware pour servir le dashboard
+// Variables globales Instagram
+let igClient = null;
+let isIgWorking = false;
+let forceStopIg = false;
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Helpers Cloud Firestore (Remplacent les helpers BDD locaux)
+// Helpers Firestore
 async function getCampaigns(uid) {
     if (!db) return [];
     const snapshot = await db.collection('campaigns').where('userId', '==', uid).get();
@@ -75,11 +75,9 @@ async function getCampaigns(uid) {
 
 async function saveCampaign(uid, data) {
     if (!db) return;
-    const { idToken, uid: clientUid, ...campaignData } = data; 
+    const { idToken, uid: clientUid, ...campaignData } = data;
     campaignData.userId = uid;
-    // Note: On utilise Date.now() car l'objet FieldValue diffère entre client/admin
-    campaignData.updatedAt = Date.now(); 
-
+    campaignData.updatedAt = Date.now();
     if (data.id) {
         const id = data.id;
         await db.collection('campaigns').doc(id).set(campaignData, { merge: true });
@@ -107,6 +105,34 @@ async function updateHistory(uid, groupId, participantId) {
     }, { merge: true });
 }
 
+async function saveIgAction(uid, targetUsername, actionType) {
+    if (!db) return;
+    await db.collection('instagram_actions').add({
+        userId: uid,
+        targetUsername: targetUsername,
+        action: actionType,
+        timestamp: Date.now(),
+        unfollowed: false
+    });
+}
+
+async function getPendingUnfollows(uid) {
+    if (!db) return [];
+    const fortyEightHoursAgo = Date.now() - (48 * 60 * 60 * 1000);
+    const snapshot = await db.collection('instagram_actions')
+        .where('userId', '==', uid)
+        .where('action', '==', 'FOLLOW')
+        .where('unfollowed', '==', false)
+        .where('timestamp', '<=', fortyEightHoursAgo)
+        .get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+async function markAsUnfollowed(docId) {
+    if (!db) return;
+    await db.collection('instagram_actions').doc(docId).update({ unfollowed: true });
+}
+
 function formatNom(nom) {
     if (!nom) return "l'ami(e)";
     return (nom.split(' ')[0] || nom).trim();
@@ -115,13 +141,324 @@ function formatNom(nom) {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const randomSleep = (min, max) => sleep(Math.floor(Math.random() * (max - min + 1) + min) * 1000);
 
-// Gestion WebSockets
+const getChromePath = () => {
+    if (process.platform === 'darwin') return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    if (process.platform === 'win32') {
+        const paths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe'
+        ];
+        for (const p of paths) {
+            if (fs.existsSync(p)) return p;
+        }
+    }
+    return undefined;
+};
+
+// ============================================================
+// CLASSE INSTAGRAM CLIENT (via API Mobile Instagram)
+// ============================================================
+const { IgApiClient } = require('instagram-private-api');
+
+class InstagramClient {
+    constructor(io) {
+        this.io = io;
+        this.ig = new IgApiClient();
+        this.isConnected = false;
+        this.username = null;
+        this.sessionPath = path.join(__dirname, '.ig_session.json');
+    }
+
+    log(msg, type = 'info') {
+        this.io.emit('log_ig', { msg, type });
+        console.log(`[IG] ${msg}`);
+    }
+
+    // Sauvegarde la session pour ne pas se reconnecter à chaque redémarrage
+    async saveSession() {
+        try {
+            const state = await this.ig.state.serialize();
+            delete state.constants; // Pas besoin de sauvegarder les constantes
+            fs.writeFileSync(this.sessionPath, JSON.stringify(state));
+            this.log('Session sauvegardée.');
+        } catch (e) {
+            this.log('Impossible de sauvegarder la session: ' + e.message, 'warn');
+        }
+    }
+
+    // Charge une session existante
+    async loadSession() {
+        try {
+            if (fs.existsSync(this.sessionPath)) {
+                const state = JSON.parse(fs.readFileSync(this.sessionPath, 'utf8'));
+                await this.ig.state.deserialize(state);
+                return true;
+            }
+        } catch (e) {
+            this.log('Session précédente invalide, nouvelle connexion requise.', 'warn');
+        }
+        return false;
+    }
+
+    // Initialisation : tente de charger la session existante
+    async init() {
+        this.log('Vérification de la session Instagram...');
+        const hasSession = await this.loadSession();
+
+        if (hasSession) {
+            try {
+                // Vérifier que la session est encore valide
+                const userInfo = await this.ig.account.currentUser();
+                this.username = userInfo.username;
+                this.isConnected = true;
+                this.log(`Session restaurée ! Connecté en tant que @${this.username}`, 'success');
+                this.io.emit('ig_status', {
+                    state: 'CONNECTED',
+                    desc: '🟢 Instagram Connecté',
+                    username: this.username
+                });
+                return;
+            } catch (e) {
+                this.log('Session expirée, reconnexion nécessaire.', 'warn');
+                this.isConnected = false;
+            }
+        }
+
+        this.io.emit('ig_status', { state: 'DISCONNECTED', desc: '🔴 Instagram Déconnecté' });
+    }
+
+    // Connexion avec identifiants
+    async login(username, password) {
+        try {
+            this.log(`Connexion en tant que @${username}...`);
+
+            // Simuler un appareil Android pour l'API
+            this.ig.state.generateDevice(username);
+
+            // Simulation du flux de démarrage d'application (requis par Instagram)
+            await this.ig.simulate.preLoginFlow();
+
+            // Connexion
+            const loggedUser = await this.ig.account.login(username, password);
+            this.username = loggedUser.username;
+            this.isConnected = true;
+
+            // Finalisation du flux post-login
+            process.nextTick(async () => {
+                try {
+                    await this.ig.simulate.postLoginFlow();
+                } catch (e) {
+                    this.log('Erreur post-login simulation: ' + e.message, 'warn');
+                }
+            });
+
+            // Sauvegarder la session pour les prochains redémarrages
+            await this.saveSession();
+
+            this.log(`✅ Connecté avec succès en tant que @${this.username} !`, 'success');
+            this.io.emit('ig_status', {
+                state: 'CONNECTED',
+                desc: '🟢 Instagram Connecté',
+                username: this.username
+            });
+
+            return { success: true };
+
+        } catch (e) {
+            const msg = e.message || 'Erreur inconnue';
+
+            // Instagram demande un challenge (2FA, téléphone, etc.)
+            if (e.name === 'IgCheckpointError') {
+                this.log('🛡️ Vérification de sécurité requise (checkpoint Instagram).', 'warn');
+                try {
+                    await this.ig.challenge.auto(true);
+                    this.io.emit('ig_code_required', true);
+                    return { success: true, codeRequired: true };
+                } catch (challengeErr) {
+                    this.log(`Erreur challenge: ${challengeErr.message}`, 'error');
+                    return { success: false, message: 'Challenge requis mais impossible à résoudre automatiquement.' };
+                }
+            }
+
+            // Mauvais mot de passe
+            if (e.name === 'IgLoginBadPasswordError') {
+                this.log('Mot de passe incorrect.', 'error');
+                return { success: false, message: 'Mot de passe incorrect.' };
+            }
+
+            // Compte bloqué / rate limit
+            if (e.name === 'IgLoginInvalidUserError') {
+                this.log('Compte introuvable.', 'error');
+                return { success: false, message: 'Nom d\'utilisateur introuvable.' };
+            }
+
+            this.log(`Erreur de connexion : ${msg}`, 'error');
+            return { success: false, message: msg };
+        }
+    }
+
+    // Valide le code 2FA / challenge
+    async submitCode(code) {
+        try {
+            this.log(`Soumission du code : ${code}...`);
+            await this.ig.challenge.sendSecurityCode(code);
+            const loggedUser = await this.ig.account.currentUser();
+            this.username = loggedUser.username;
+            this.isConnected = true;
+            await this.saveSession();
+            this.log(`✅ Code accepté ! Connecté en tant que @${this.username}`, 'success');
+            this.io.emit('ig_status', {
+                state: 'CONNECTED',
+                desc: '🟢 Instagram Connecté',
+                username: this.username
+            });
+            return { success: true };
+        } catch (e) {
+            this.log(`Erreur code: ${e.message}`, 'error');
+            return { success: false, message: e.message };
+        }
+    }
+
+    // Déconnexion et nettoyage
+    async logout() {
+        try {
+            await this.ig.account.logout();
+        } catch (e) {}
+        if (fs.existsSync(this.sessionPath)) {
+            fs.unlinkSync(this.sessionPath);
+        }
+        this.isConnected = false;
+        this.username = null;
+        this.io.emit('ig_status', { state: 'DISCONNECTED', desc: '🔴 Instagram Déconnecté' });
+        this.log('Déconnecté d\'Instagram.');
+    }
+
+    // Scrape les followers d'un compte
+    async scrapeFollowers(targetUsername, count = 100) {
+        try {
+            this.log(`Recherche des abonnés de @${targetUsername}...`);
+            const userId = await this.ig.user.getIdByUsername(targetUsername.replace('@', ''));
+            const followersFeed = this.ig.feed.accountFollowers(userId);
+
+            const results = [];
+            do {
+                const page = await followersFeed.items();
+                results.push(...page.map(u => u.username));
+                this.log(`🔍 ${results.length} abonnés récupérés...`);
+                if (results.length >= count) break;
+                await sleep(1500 + Math.random() * 1000); // Délai humain
+            } while (followersFeed.isMoreAvailable());
+
+            const finalList = results.slice(0, count);
+            this.log(`✅ Scraping terminé : ${finalList.length} abonnés.`, 'success');
+            this.io.emit('ig_scraped_data', finalList);
+            return finalList;
+        } catch (e) {
+            this.log(`Erreur scraping : ${e.message}`, 'error');
+            return [];
+        }
+    }
+
+    // Follow un utilisateur
+    async followUser(username) {
+        try {
+            const userId = await this.ig.user.getIdByUsername(username);
+            await this.ig.friendship.create(userId);
+            return { success: true };
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+    }
+
+    // Unfollow un utilisateur
+    async unfollowUser(username) {
+        try {
+            const userId = await this.ig.user.getIdByUsername(username);
+            await this.ig.friendship.destroy(userId);
+            return { success: true };
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+    }
+
+    // Vérifie si un utilisateur nous suit en retour
+    async checkFollowBack(username) {
+        try {
+            const userId = await this.ig.user.getIdByUsername(username);
+            const friendship = await this.ig.friendship.show(userId);
+            return friendship.followed_by; // true si il nous suit
+        } catch (e) {
+            return false;
+        }
+    }
+}
+// ============================================================
+// WORKER INSTAGRAM
+// ============================================================
+async function startInstagramCampaignWorker(uid, config, io) {
+    isIgWorking = true;
+    io.emit('ig_status', { state: 'WORKING', desc: "✈️ Automate Instagram en cours..." });
+
+    try {
+        const pendingUnfollows = await getPendingUnfollows(uid);
+        if (pendingUnfollows.length > 0) {
+            io.emit('log_ig', { msg: `🧹 Nettoyage : ${pendingUnfollows.length} désabonnements en attente...`, type: 'info' });
+            for (const action of pendingUnfollows) {
+                if (forceStopIg) break;
+                const followsBack = await igClient.checkFollowBack(action.targetUsername);
+                let shouldUnfollow = false;
+                if (!followsBack && config.unfollowNotFollowing) shouldUnfollow = true;
+                if (followsBack && config.unfollowFollowing) shouldUnfollow = true;
+
+                if (shouldUnfollow) {
+                    const res = await igClient.unfollowUser(action.targetUsername);
+                    if (res.success) {
+                        io.emit('log_ig', { msg: `✅ Désabonné de ${action.targetUsername}`, type: 'success' });
+                        await markAsUnfollowed(action.id);
+                    }
+                } else {
+                    await markAsUnfollowed(action.id);
+                }
+                await randomSleep(config.delayMin, config.delayMax);
+            }
+        }
+
+        if (config.autoFollow && !forceStopIg) {
+            if (config.scrapedUsers && config.scrapedUsers.length > 0) {
+                io.emit('log_ig', { msg: `🔥 Début des abonnements (${config.scrapedUsers.length} cibles)`, type: 'info' });
+                for (const target of config.scrapedUsers) {
+                    if (forceStopIg) break;
+                    const res = await igClient.followUser(target);
+                    if (res.success) {
+                        io.emit('log_ig', { msg: `👤 Suivi : ${target}`, type: 'success' });
+                        await saveIgAction(uid, target, 'FOLLOW');
+                        const delay = Math.floor(Math.random() * (config.delayMax - config.delayMin + 1)) + config.delayMin;
+                        io.emit('log_ig', { msg: `⏳ Pause de ${delay}s...`, type: 'system' });
+                        await sleep(delay * 1000);
+                    } else {
+                        io.emit('log_ig', { msg: `⚠️ Saut de ${target}: ${res.message}`, type: 'warn' });
+                    }
+                }
+            }
+        }
+
+        io.emit('log_ig', { msg: `🎉 Session Instagram terminée !`, type: 'success' });
+    } catch (e) {
+        io.emit('log_ig', { msg: `❌ Erreur Automate: ${e.message}`, type: 'error' });
+    }
+
+    isIgWorking = false;
+    io.emit('ig_status', { state: 'CONNECTED', desc: "🟢 Instagram Prêt" });
+}
+
+// ============================================================
+// GESTION WEBSOCKETS
+// ============================================================
 io.on('connection', (socket) => {
     console.log('[API] Un client est connecté au Dashboard');
-
     socket.emit('log', { msg: 'Connecté au serveur en arrière-plan. En attente d\'authentification cloud...', type: 'system' });
-    
-    // On n'envoie plus la liste au démarrage, on attend que le client envoie son token
+
     socket.on('get_campaigns', async (data) => {
         const uid = await getUidFromToken(data);
         console.log(`[API] Requête reçue pour UID: ${uid}`);
@@ -131,12 +468,10 @@ io.on('connection', (socket) => {
         socket.emit('campaigns_list', list);
     });
 
-    // Selon l'état actuel de WhatsApp, on prévient le dashboard
     if (wpClient) {
         if (isBotWorking) {
             socket.emit('status', { state: 'WORKING', desc: "🟢 Campagne en cours" });
         } else {
-            // Si le client est prêt mais ne travaille pas
             socket.emit('status', { state: 'CONNECTED', desc: "🟢 WhatsApp Connecté" });
             socket.emit('groups', globalGroups);
         }
@@ -145,32 +480,26 @@ io.on('connection', (socket) => {
         initWhatsAppSession(socket);
     }
 
-    // L'utilisateur clique sur "Lancer la session"
     socket.on('start_campaign', async (config) => {
         const uid = await getUidFromToken(config);
         if (!uid || !wpClient || isBotWorking) return;
-        
         forceStop = false;
         await startCampaignWorker(uid, config, socket);
     });
 
-    // Arrêt Forcé
     socket.on('stop_campaign', async (data) => {
         const uid = await getUidFromToken(data);
         if (!uid) return;
-
         if (isBotWorking) {
             forceStop = true;
             socket.emit('log', { msg: '⚠️ Demande d\'arrêt forcé reçue !', type: 'warn' });
         }
     });
 
-    // Demander la liste des participants d'un groupe spécifique
     socket.on('get_group_participants', async (data) => {
         const uid = await getUidFromToken(data);
         if (!uid || !wpClient) return;
-
-        const groupId = data.groupId || data; // Fallback pour compatibilité
+        const groupId = data.groupId || data;
         try {
             const chat = await wpClient.getChatById(groupId);
             if (chat.isGroup) {
@@ -184,7 +513,6 @@ io.on('connection', (socket) => {
                         isAdmin: p.isAdmin || p.isSuperAdmin
                     });
                 }
-                
                 const dejaFait = await getHistory(uid, groupId);
                 socket.emit('group_participants', { groupId, participants, dejaFait });
             }
@@ -193,23 +521,18 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Gestion des Campagnes (Sauvegarder)
     socket.on('save_campaign', async (campaignData) => {
         const uid = await getUidFromToken(campaignData);
         if (!uid) return;
-
         const newId = await saveCampaign(uid, campaignData);
         socket.emit('log', { msg: `✅ Campagne sauvegardée dans le cloud !`, type: 'success' });
-        
         socket.emit('campaign_saved', newId);
         socket.emit('campaigns_list', await getCampaigns(uid));
     });
 
-    // Supprimer une campagne
     socket.on('delete_campaign', async (data) => {
         const uid = await getUidFromToken(data);
         if (!uid || !db) return;
-
         try {
             await db.collection('campaigns').doc(data.id).delete();
             socket.emit('log', { msg: '🗑️ Campagne supprimée du cloud.', type: 'info' });
@@ -219,24 +542,18 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Déconnexion complète pour changer de compte
     socket.on('logout', async (data) => {
         const uid = await getUidFromToken(data);
         if (!uid || !wpClient) return;
-        
         socket.emit('log', { msg: '🔔 Déconnexion en cours...', type: 'warn' });
-        
         try {
             await wpClient.logout();
             await wpClient.destroy();
         } catch (e) {
             console.error("Erreur lors du logout:", e);
         }
-
         wpClient = null;
         isBotWorking = false;
-
-        // Supprimer le dossier de session pour forcer un nouveau QR Code
         const sessionPath = path.join(__dirname, '.wwebjs_auth');
         if (fs.existsSync(sessionPath)) {
             try {
@@ -246,38 +563,91 @@ io.on('connection', (socket) => {
                 console.error("Erreur suppression session:", err);
             }
         }
-
-        // Relancer une session vierge
         initWhatsAppSession(socket);
+    });
+
+    // ---- Handlers Instagram ----
+
+    socket.on('ig_init', async () => {
+        if (!igClient) {
+            igClient = new InstagramClient(io);
+            socket.emit('ig_status', { state: 'DISCONNECTED', desc: '🟠 Initialisation du moteur...' });
+            await igClient.init();
+        } else {
+            // Client déjà en mémoire → juste rafraîchir le statut
+            await igClient.checkAndUpdateStatus();
+        }
+    });
+
+    socket.on('ig_force_login', async () => {
+        if (igClient) await igClient.forceLoginView();
+    });
+
+    socket.on('ig_login', async (data) => {
+        if (!igClient) return;
+        const result = await igClient.login(data.username, data.password);
+        socket.emit('ig_login_result', result);
+    });
+
+    socket.on('ig_submit_code', async (data) => {
+        if (!igClient) return;
+        const result = await igClient.submitCode(data.code);
+        socket.emit('ig_submit_code_result', result);
+    });
+
+    socket.on('ig_logout', async () => {
+        if (igClient) {
+            await igClient.logout();
+            igClient = null;
+        }
+    });
+
+    socket.on('ig_remote_click', async (data) => {
+        if (igClient) await igClient.remoteClick(data.x, data.y);
+    });
+
+    socket.on('ig_remote_type', async (data) => {
+        if (igClient) await igClient.remoteType(data.text);
+    });
+
+    socket.on('ig_remote_key', async (data) => {
+        if (igClient) await igClient.remoteKey(data.key);
+    });
+
+    socket.on('ig_scrape_followers', async (data) => {
+        if (!igClient || !igClient.isConnected) return;
+        await igClient.scrapeFollowers(data.target, 50);
+    });
+
+    socket.on('ig_start_campaign', async (config) => {
+        const uid = await getUidFromToken(config);
+        if (!uid || !igClient || !igClient.isConnected || isIgWorking) return;
+        forceStopIg = false;
+        io.emit('log_ig', { msg: '🚀 Démarrage de la campagne Instagram...', type: 'info' });
+        await startInstagramCampaignWorker(uid, config, io);
+    });
+
+    socket.on('ig_stop_campaign', () => {
+        if (isIgWorking) {
+            forceStopIg = true;
+            io.emit('log_ig', { msg: '⚠️ Arrêt forcé demandé...', type: 'warn' });
+        }
     });
 });
 
-// Initialisation de WhatsApp (Une seule fois par démarrage de l'appli)
-function initWhatsAppSession(initialSocket=null) {
+// ============================================================
+// INITIALISATION WHATSAPP
+// ============================================================
+function initWhatsAppSession(initialSocket = null) {
     console.log('[WHATSAPP] Démarrage de l\'instance Moteur...');
-    if(initialSocket) initialSocket.emit('log', { msg: 'Lancement du navigateur interne...', type: 'system' });
-
-    const getChromePath = () => {
-        if(process.platform === 'darwin') return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-        if(process.platform === 'win32') {
-            const paths = [
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe'
-            ];
-            for (const p of paths) {
-                if (fs.existsSync(p)) return p;
-            }
-        }
-        return undefined;
-    };
+    if (initialSocket) initialSocket.emit('log', { msg: 'Lancement du navigateur interne...', type: 'system' });
 
     wpClient = new Client({
         authStrategy: new LocalAuth(),
         puppeteer: {
             executablePath: getChromePath(),
             args: [
-                '--no-sandbox', 
+                '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
@@ -286,7 +656,7 @@ function initWhatsAppSession(initialSocket=null) {
                 '--single-process',
                 '--disable-gpu'
             ],
-            headless: true // Important: on cache pour les perfs
+            headless: true
         }
     });
 
@@ -305,14 +675,12 @@ function initWhatsAppSession(initialSocket=null) {
     wpClient.on('ready', async () => {
         console.log('[WHATSAPP] Prêt et synchronisé.');
         io.emit('status', { state: 'CONNECTED', desc: '🟢 WhatsApp Prêt' });
-        
-        // On récupère les groupes pour remplir la liste déroulante côté client Web
         try {
             const chats = await wpClient.getChats();
             const grps = chats.filter(chat => chat.isGroup);
             globalGroups = grps.map(g => ({ name: g.name, id: g.id._serialized }));
             io.emit('groups', globalGroups);
-        } catch(e) {
+        } catch (e) {
             console.error("Erreur lecture chats:", e);
         }
     });
@@ -327,9 +695,10 @@ function initWhatsAppSession(initialSocket=null) {
     wpClient.initialize();
 }
 
-// MOTEUR D'ENVOI (LE WORKER)
+// ============================================================
+// MOTEUR D'ENVOI WHATSAPP
+// ============================================================
 async function startCampaignWorker(uid, config, socket) {
-    // Vérification initiale de l'heure
     const currentHour = new Date().getHours();
     if (currentHour < config.hourStart || currentHour >= config.hourEnd) {
         io.emit('log', { msg: `🛑 HORS PLAGE HORAIRE : Il est ${currentHour}h. La plage autorisée est ${config.hourStart}h-${config.hourEnd}h.`, type: 'error' });
@@ -343,7 +712,7 @@ async function startCampaignWorker(uid, config, socket) {
     try {
         const chats = await wpClient.getChats();
         const groupeCible = chats.find(c => c.isGroup && c.name === config.groupName);
-        
+
         if (!groupeCible) {
             io.emit('log', { msg: 'Erreur: Impossible de trouver le groupe sélectionné.', type: 'error' });
             return endWorker();
@@ -356,25 +725,21 @@ async function startCampaignWorker(uid, config, socket) {
 
         io.emit('log', { msg: `Analyse du groupe : ${membresDuGroupe.length} membres total.`, type: 'info' });
 
-        // Si l'utilisateur a sélectionné des membres depuis l'interface, on se fie STRICTEMENT à cette liste
         let poolDeMembres = membresDuGroupe;
         if (config.selectedMemberIds) {
             poolDeMembres = membresDuGroupe.filter(p => config.selectedMemberIds.includes(p.id._serialized));
             io.emit('log', { msg: `Ciblage manuel : ${poolDeMembres.length} membres sélectionnés.`, type: 'info' });
         } else {
-            // Mode fallback si la liste n'est pas fournie : on retire ceux qui sont dans dejaFait
             poolDeMembres = membresDuGroupe.filter(p => !dejaFait.includes(p.id._serialized));
         }
 
         let membresRestants = poolDeMembres.filter(participant => {
             const pId = participant.id._serialized;
             if (pId === moi_meme) return false;
-            // Check exclusion liste noire
             if (excludedList.some(ex => pId.includes(ex))) return false;
             return true;
         });
 
-        // Mise a jour Stats UI
         io.emit('stats', { total: membresDuGroupe.length, done: dejaFait.length, session: 0 });
 
         if (membresRestants.length === 0) {
@@ -388,7 +753,7 @@ async function startCampaignWorker(uid, config, socket) {
         let sessionCount = 0;
 
         for (const membre of aEnvoyerList) {
-            if(forceStop) break; // Arrêt d'urgence depuis l'UI
+            if (forceStop) break;
 
             const cibleId = membre.id._serialized;
             try {
@@ -403,7 +768,6 @@ async function startCampaignWorker(uid, config, socket) {
                     try {
                         if (config.media) {
                             const media = new MessageMedia(config.media.mimetype, config.media.data, config.media.filename);
-                            // On envoie le média avec le message en légende (caption)
                             await wpClient.sendMessage(cibleId, media, { caption: msgFinal });
                             io.emit('log', { msg: `[Envoyé] Média + Message remis à ${prenomFormatte}.`, type: 'success' });
                         } else {
@@ -412,26 +776,21 @@ async function startCampaignWorker(uid, config, socket) {
                         }
                     } catch (sendErr) {
                         io.emit('log', { msg: `❌ Erreur d'envoi vers ${prenomFormatte} : ${sendErr.message}`, type: 'error' });
-                        continue; // On passe au suivant même si celui-ci a échoué
+                        continue;
                     }
                 }
 
-                // Toujours mettre a jour pour avancer le workfow
                 dejaFait.push(cibleId);
                 await updateHistory(uid, groupeCible.id._serialized, cibleId);
                 sessionCount++;
-                
                 io.emit('stats', { total: membresDuGroupe.length, done: dejaFait.length, session: sessionCount });
 
-                // Anti-Ban Pause si ce n'est pas le dernier
                 if (sessionCount < aEnvoyerList.length && !forceStop) {
-                    // Vérification de l'heure pendant la boucle
                     const nowHour = new Date().getHours();
                     if (nowHour < config.hourStart || nowHour >= config.hourEnd) {
                         io.emit('log', { msg: `🛑 FIN DE PLAGE HORAIRE : Il est ${nowHour}h. Arrêt de la campagne.`, type: 'warn' });
                         break;
                     }
-
                     const delaySeconds = Math.floor(Math.random() * (config.delayMax - config.delayMin + 1)) + config.delayMin;
                     io.emit('log', { msg: `⏳ Anti-Ban : Pause de ${delaySeconds} sec avant le prochain...`, type: 'system' });
                     await sleep(delaySeconds * 1000);
@@ -444,7 +803,7 @@ async function startCampaignWorker(uid, config, socket) {
 
         io.emit('log', { msg: `🎉 FIN DE SESSION. ${sessionCount} messages ont été traités !`, type: 'success' });
 
-    } catch(err) {
+    } catch (err) {
         io.emit('log', { msg: `CRASH FATAL : ${err.message}`, type: 'error' });
     }
 
@@ -456,7 +815,9 @@ function endWorker() {
     io.emit('status', { state: 'CONNECTED', desc: "🟢 Prêt et En attente" });
 }
 
-// Run Server
+// ============================================================
+// DÉMARRAGE DU SERVEUR
+// ============================================================
 server.listen(PORT, () => {
     console.log(`=========================================`);
     console.log(`🤖 GÉDÉON : AUTOMATISATION WHATSAPP`);
