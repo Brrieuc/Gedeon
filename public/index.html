@@ -39,9 +39,9 @@
                 </div>
                 <div class="slogan">"Le seul employé qui ne prend jamais de pause café."</div>
                 <div class="login-action">
-                    <button id="btn-login-google" class="btn btn-primary btn-lg" style="display: flex; align-items: center; justify-content: center; gap: 12px; padding: 18px 45px; font-size: 1.3rem; border-radius: 60px; background: white; color: black; border: none; font-weight: 800; letter-spacing: -0.5px;">
-                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="28">
-                        DÉMARRER LE TRAVAIL
+                    <button id="btn-login-google">
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="18">
+                        Continuer avec Google
                     </button>
                     <p style="margin-top: 15px; opacity: 0.6; font-size: 0.9rem;">Accédez à votre cockpit d'automatisation</p>
                 </div>
@@ -325,11 +325,12 @@
                             <form id="ig-config-form">
                                 <div class="form-group">
                                     <label for="ig-target-account">Compte Cible (à scraper)</label>
-                                    <div style="display: flex; gap: 10px;">
-                                        <input type="text" id="ig-target-account" placeholder="@concurrent_ou_influenceur" required>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="text" id="ig-target-account" placeholder="@concurrent_ou_influenceur" required style="flex: 1;">
+                                        <input type="number" id="ig-scrape-count" value="200" min="10" max="1000" style="width: 75px; text-align: center;" title="Nombre d'abonnés à récupérer">
                                         <button type="button" class="btn btn-outline btn-sm" id="btn-ig-scrape" style="white-space: nowrap;">🔍 Scraper</button>
                                     </div>
-                                    <small>Récupère les abonnés de ce compte pour les cibler.</small>
+                                    <small>Scrape les abonnés de ce compte. Le nombre indique combien récupérer (max 1000).</small>
                                 </div>
 
                                 <div class="stats-row" style="display: flex; gap: 10px; margin-bottom: 20px;">

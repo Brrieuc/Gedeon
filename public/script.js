@@ -191,26 +191,46 @@ function updateSelectionCount() {
     selectionSummary.textContent = `${checked} membre(s) sélectionné(s) sur ${total}`;
 }
 
+function addToExcludedNumbers(number) {
+    const field = document.getElementById('excludedNumbers');
+    const current = field.value.split(',').map(n => n.trim()).filter(Boolean);
+    if (!current.includes(number)) {
+        current.push(number);
+        field.value = current.join(', ');
+    }
+}
+
 function renderMembersList(participants) {
     if (!membersList) return;
     currentParticipants = participants;
     membersList.innerHTML = '';
-    
+
     participants.forEach(p => {
+        const number = p.number || p.id.split('@')[0];
         const div = document.createElement('div');
         div.className = 'member-item';
-        div.dataset.name = (p.name || p.pushname || p.number || '').toLowerCase();
-        
+        div.dataset.name = (p.name || p.pushname || number || '').toLowerCase();
+        div.dataset.number = number.toLowerCase();
+
         const isChecked = pendingSelectedMemberIds.includes(p.id) ? 'checked' : '';
-        
+
         div.innerHTML = `
             <input type="checkbox" value="${p.id}" id="chk-${p.id}" ${isChecked}>
             <label for="chk-${p.id}">
                 <span class="member-name">${p.name || p.pushname || 'Sans Nom'}</span>
-                <span class="member-number">${p.number || p.id.split('@')[0]}</span>
+                <span class="member-number">${number}</span>
             </label>
+            <button type="button" class="btn-exclude" title="Exclure ce numéro">✕</button>
         `;
         membersList.appendChild(div);
+
+        div.querySelector('.btn-exclude').onclick = () => {
+            const chk = div.querySelector('input[type="checkbox"]');
+            chk.checked = false;
+            addToExcludedNumbers(number);
+            updateSelectionCount();
+            div.classList.add('excluded');
+        };
     });
 
     membersContainer.style.display = 'block';
@@ -351,16 +371,26 @@ socket.on('ig_status', (data) => {
 
     const igConnectedUser = document.getElementById('ig-connected-user');
     if (igConnectedUser) {
-        if (data.state === 'CONNECTED') {
-            igConnectedUser.textContent = data.username ? `@${data.username}` : 'Recherche du compte...';
+        if (data.state === 'CONNECTED' || data.state === 'WORKING') {
+            igConnectedUser.textContent = data.username ? `@${data.username}` : '';
         } else {
             igConnectedUser.textContent = '';
         }
     }
-    
-    if (data.state === 'CONNECTED') {
+
+    const btnIgStop  = document.getElementById('btn-ig-stop');
+    const btnIgStart = document.getElementById('btn-ig-start');
+
+    if (data.state === 'WORKING') {
         igLoginContainer.style.display = 'none';
         igDashboardContainer.style.display = 'grid';
+        if (btnIgStop)  btnIgStop.disabled  = false;
+        if (btnIgStart) btnIgStart.disabled = true;
+    } else if (data.state === 'CONNECTED') {
+        igLoginContainer.style.display = 'none';
+        igDashboardContainer.style.display = 'grid';
+        if (btnIgStop)  btnIgStop.disabled  = true;
+        if (btnIgStart) btnIgStart.disabled = false;
     } else {
         igLoginContainer.style.display = 'block';
         igDashboardContainer.style.display = 'none';
@@ -368,8 +398,15 @@ socket.on('ig_status', (data) => {
             btnIgLogin.disabled = false;
             btnIgLogin.innerHTML = '<span>Se connecter</span>';
         }
+        if (btnIgStop)  btnIgStop.disabled  = true;
+        if (btnIgStart) btnIgStart.disabled = false;
     }
 });
+
+const btnIgStop = document.getElementById('btn-ig-stop');
+if (btnIgStop) {
+    btnIgStop.onclick = () => socket.emit('ig_stop_campaign');
+}
 
 socket.on('ig_screenshot', (base64) => {
     if (igScreenshotImg && igPreviewPlaceholder) {
@@ -497,7 +534,8 @@ if (groupSelect) groupSelect.onchange = () => {
 if (memberSearch) memberSearch.oninput = (e) => {
     const q = e.target.value.toLowerCase();
     document.querySelectorAll('.member-item').forEach(div => {
-        div.style.display = div.dataset.name.includes(q) ? 'flex' : 'none';
+        const match = div.dataset.name.includes(q) || div.dataset.number.includes(q);
+        div.style.display = match ? 'flex' : 'none';
     });
 };
 
@@ -641,8 +679,9 @@ if (document.getElementById('ig-config-form')) {
 if (document.getElementById('btn-ig-scrape')) {
     document.getElementById('btn-ig-scrape').onclick = () => {
         const target = document.getElementById('ig-target-account').value;
+        const count = parseInt(document.getElementById('ig-scrape-count').value) || 200;
         if (!target) return alert('Source requise !');
-        appendLog(`Lancement du scraping pour ${target}...`, 'info', 'ig-console-output');
-        emitSecure('ig_scrape_followers', { target });
+        appendLog(`Scraping de @${target} en cours (${count} cibles max)...`, 'info', 'ig-console-output');
+        emitSecure('ig_scrape_followers', { target, count });
     };
 }

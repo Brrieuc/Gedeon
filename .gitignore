@@ -5,3 +5,6 @@ dist/
 .wwebjs_cache/
 *.log
 .DS_Store
+.ig_session.json
+.ig_creds.json
+.ig_browser/
