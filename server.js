@@ -58,16 +58,32 @@ let forceStopIg = false;
 let lastKnownUid  = null;   // Dernier uid connu — pour le cron auto-unfollow
 let lastIgConfig  = null;   // Dernière config IG (règles unfollow)
 
-// ── Caffeinate (macOS) — empêche la mise en veille pendant les campagnes ─────
+// ── Anti-sleep cross-platform — empêche la mise en veille pendant les campagnes
 let caffeinateProc = null;
 function startCaffeinate() {
-    if (process.platform !== 'darwin' || caffeinateProc) return;
-    caffeinateProc = spawn('caffeinate', ['-dims'], { detached: false });
-    console.log('[SYS] Mise en veille désactivée (caffeinate)');
+    if (caffeinateProc) return;
+    if (process.platform === 'darwin') {
+        // macOS : caffeinate -dims (display + idle + disk + system sleep)
+        caffeinateProc = spawn('caffeinate', ['-dims'], { detached: false, stdio: 'ignore' });
+        console.log('[SYS] Mise en veille désactivée (caffeinate macOS)');
+    } else if (process.platform === 'win32') {
+        // Windows : SetThreadExecutionState via PowerShell
+        // ES_CONTINUOUS (0x80000000) | ES_SYSTEM_REQUIRED (0x00000001) = 0x80000001
+        const ps = [
+            'Add-Type -Name PwrMgmt -Namespace Win32 -MemberDefinition',
+            '"[DllImport(\\"kernel32.dll\\")] public static extern uint SetThreadExecutionState(uint f);";',
+            '[Win32.PwrMgmt]::SetThreadExecutionState(0x80000001);',
+            'while($true){Start-Sleep 3600}'
+        ].join(' ');
+        caffeinateProc = spawn('powershell', ['-NoProfile', '-Command', ps], {
+            detached: false, stdio: 'ignore'
+        });
+        console.log('[SYS] Mise en veille désactivée (PowerShell Windows)');
+    }
 }
 function stopCaffeinate() {
     if (!caffeinateProc) return;
-    caffeinateProc.kill();
+    try { caffeinateProc.kill(); } catch (_) {}
     caffeinateProc = null;
     console.log('[SYS] Mise en veille réactivée');
 }
