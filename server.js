@@ -8,6 +8,8 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+const cron = require('node-cron');
 require('dotenv').config();
 const firebase = require('firebase/compat/app');
 require('firebase/compat/firestore');
@@ -53,6 +55,22 @@ let globalGroups = [];
 let igClient    = null;
 let isIgWorking = false;
 let forceStopIg = false;
+let lastKnownUid  = null;   // Dernier uid connu — pour le cron auto-unfollow
+let lastIgConfig  = null;   // Dernière config IG (règles unfollow)
+
+// ── Caffeinate (macOS) — empêche la mise en veille pendant les campagnes ─────
+let caffeinateProc = null;
+function startCaffeinate() {
+    if (process.platform !== 'darwin' || caffeinateProc) return;
+    caffeinateProc = spawn('caffeinate', ['-dims'], { detached: false });
+    console.log('[SYS] Mise en veille désactivée (caffeinate)');
+}
+function stopCaffeinate() {
+    if (!caffeinateProc) return;
+    caffeinateProc.kill();
+    caffeinateProc = null;
+    console.log('[SYS] Mise en veille réactivée');
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -629,6 +647,9 @@ class InstagramClient {
 // ════════════════════════════════════════════════════════════════════════════════
 async function startInstagramWorker(uid, config) {
     isIgWorking = true;
+    lastKnownUid = uid;
+    lastIgConfig = config;
+    startCaffeinate();
     io.emit('ig_status', { state: 'WORKING', desc: 'En cours...' });
 
     const cutoff = Date.now() - 48 * 60 * 60 * 1000;
@@ -704,9 +725,66 @@ async function startInstagramWorker(uid, config) {
         await igClient.closeBrowser().catch(() => {});
     }
 
+    stopCaffeinate();
     isIgWorking = false;
     io.emit('ig_status', { state: 'CONNECTED', desc: 'Connecté', username: igClient?.username });
 }
+
+// ── Cron : vérification automatique des désabonnements toutes les 2h ─────────
+async function runAutoUnfollow() {
+    if (isIgWorking || !igClient?.isConnected || !lastKnownUid || !lastIgConfig) return;
+    const pending = await getAllPendingFollows(lastKnownUid).catch(() => []);
+    if (pending.length === 0) return;
+
+    console.log(`[CRON] Auto-unfollow : ${pending.length} abonnements à vérifier`);
+    isIgWorking = true;
+    startCaffeinate();
+    io.emit('ig_status', { state: 'WORKING', desc: 'Vérif. auto désabonnements...' });
+    io.emit('log_ig', { msg: `[auto] Vérification de ${pending.length} abonnement(s)...`, type: 'system' });
+
+    try {
+        await igClient.launchBrowser();
+        const loggedIn = await igClient.ensureWebLoggedIn();
+        if (loggedIn) {
+            const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+            for (const action of pending) {
+                if (forceStopIg) break;
+                const followsBack = await igClient.checkFollowBack(action.targetUsername);
+                const expired = action.timestamp <= cutoff;
+
+                if (followsBack && lastIgConfig.unfollowFollowing) {
+                    const r = await igClient.unfollowUser(action.targetUsername);
+                    if (r.success) {
+                        io.emit('log_ig', { msg: `[auto] @${action.targetUsername} suit → désabonné`, type: 'info' });
+                        await markAsUnfollowed(action.id);
+                        await sleep(12000 + Math.random() * 8000);
+                    }
+                } else if (!followsBack && expired && lastIgConfig.unfollowNotFollowing) {
+                    const r = await igClient.unfollowUser(action.targetUsername);
+                    if (r.success) {
+                        io.emit('log_ig', { msg: `[auto] @${action.targetUsername} pas de retour (48h) → désabonné`, type: 'info' });
+                        await markAsUnfollowed(action.id);
+                        await sleep(12000 + Math.random() * 8000);
+                    }
+                } else if (expired || (followsBack && !lastIgConfig.unfollowFollowing)) {
+                    await markAsUnfollowed(action.id);
+                }
+            }
+        }
+        await igClient.closeBrowser();
+        io.emit('log_ig', { msg: '[auto] Vérification terminée.', type: 'success' });
+    } catch (e) {
+        console.error('[CRON] Erreur auto-unfollow:', e.message);
+        await igClient.closeBrowser().catch(() => {});
+    }
+
+    stopCaffeinate();
+    isIgWorking = false;
+    io.emit('ig_status', { state: 'CONNECTED', desc: 'Connecté', username: igClient?.username });
+}
+
+// Toutes les 2h (évite les conflits avec une campagne manuelle)
+cron.schedule('0 */2 * * *', runAutoUnfollow);
 
 // ════════════════════════════════════════════════════════════════════════════════
 // WEBSOCKETS
